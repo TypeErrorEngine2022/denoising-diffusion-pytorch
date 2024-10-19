@@ -26,10 +26,10 @@ from ema_pytorch import EMA
 
 from accelerate import Accelerator
 
-from denoising_diffusion_pytorch.attend import Attend
-from denoising_diffusion_pytorch.fid_evaluation import FIDEvaluation
+from .attend import Attend
+from .fid_evaluation import FIDEvaluation
 
-from denoising_diffusion_pytorch.version import __version__
+from .version import __version__
 
 # constants
 

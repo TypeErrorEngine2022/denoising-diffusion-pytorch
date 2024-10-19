@@ -28,9 +28,9 @@ from ema_pytorch import EMA
 
 from accelerate import Accelerator
 
-from denoising_diffusion_pytorch.attend import Attend
+from .attend import Attend
 
-from denoising_diffusion_pytorch.version import __version__
+from .version import __version__
 
 # constants
 
@@ -975,7 +975,7 @@ class Trainer:
         self.calculate_fid = calculate_fid and self.accelerator.is_main_process
 
         if self.calculate_fid:
-            from denoising_diffusion_pytorch.fid_evaluation import FIDEvaluation
+            from .fid_evaluation import FIDEvaluation
 
             if not is_ddim_sampling:
                 self.accelerator.print(

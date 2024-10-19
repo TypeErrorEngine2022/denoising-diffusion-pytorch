@@ -21,7 +21,7 @@ from ema_pytorch import EMA
 
 from tqdm.auto import tqdm
 
-from denoising_diffusion_pytorch.version import __version__
+from .version import __version__
 
 # constants
 
@@ -351,6 +351,7 @@ class Unet1D(Module):
             x_self_cond = default(x_self_cond, lambda: torch.zeros_like(x))
             x = torch.cat((x_self_cond, x), dim = 1)
 
+        # print(x.size())
         x = self.init_conv(x)
         r = x.clone()
 
@@ -373,6 +374,9 @@ class Unet1D(Module):
         x = self.mid_block2(x, t)
 
         for block1, block2, attn, upsample in self.ups:
+            # print('x', x.shape)
+            # hp = h.pop()
+            # print('hp', hp.shape)
             x = torch.cat((x, h.pop()), dim = 1)
             x = block1(x, t)
 
@@ -391,6 +395,7 @@ class Unet1D(Module):
 
 def extract(a, t, x_shape):
     b, *_ = t.shape
+    # print(a.get_device(), t.get_device())
     out = a.gather(-1, t)
     return out.reshape(b, *((1,) * (len(x_shape) - 1)))
 
@@ -423,12 +428,15 @@ class GaussianDiffusion1D(Module):
         objective = 'pred_noise',
         beta_schedule = 'cosine',
         ddim_sampling_eta = 0.,
-        auto_normalize = True
+        auto_normalize = True,
+        device = 'cuda:0',
     ):
         super().__init__()
         self.model = model
         self.channels = self.model.channels
         self.self_condition = self.model.self_condition
+        self.device = device
+
 
         self.seq_length = seq_length
 
@@ -442,10 +450,12 @@ class GaussianDiffusion1D(Module):
             betas = cosine_beta_schedule(timesteps)
         else:
             raise ValueError(f'unknown beta schedule {beta_schedule}')
+        
+        betas = betas.to(self.device)
 
         alphas = 1. - betas
-        alphas_cumprod = torch.cumprod(alphas, dim=0)
-        alphas_cumprod_prev = F.pad(alphas_cumprod[:-1], (1, 0), value = 1.)
+        alphas_cumprod = torch.cumprod(alphas, dim=0).to(self.device)
+        alphas_cumprod_prev = F.pad(alphas_cumprod[:-1], (1, 0), value = 1.).to(self.device)
 
         timesteps, = betas.shape
         self.num_timesteps = int(timesteps)
@@ -689,6 +699,8 @@ class GaussianDiffusion1D(Module):
 
         # predict and take gradient step
 
+        # print('x shape', x.shape)
+        # print('t shape', t.shape)
         model_out = self.model(x, t, x_self_cond)
 
         if self.objective == 'pred_noise':
@@ -705,14 +717,16 @@ class GaussianDiffusion1D(Module):
         loss = reduce(loss, 'b ... -> b', 'mean')
 
         loss = loss * extract(self.loss_weight, t, loss.shape)
-        return loss.mean()
+        return model_out,loss.mean()
 
     def forward(self, img, *args, **kwargs):
         b, c, n, device, seq_length, = *img.shape, img.device, self.seq_length
+        # print((b, c, n, device, seq_length))
         assert n == seq_length, f'seq length must be {seq_length}'
         t = torch.randint(0, self.num_timesteps, (b,), device=device).long()
 
         img = self.normalize(img)
+        # print(img)
         return self.p_losses(img, t, *args, **kwargs)
 
 # trainer class
@@ -736,9 +750,23 @@ class Trainer1D(object):
         amp = False,
         mixed_precision_type = 'fp16',
         split_batches = True,
-        max_grad_norm = 1.
+        max_grad_norm = 1.,
+        swriter=None,
+        summary_folder_name=None,
+        summary_record_name=None,
+        evaluateSelf=None,
+        evaluate=None,
+        initial_step=1000,
     ):
         super().__init__()
+
+        self.swriter = swriter
+        self.summary_folder_name = summary_folder_name
+        self.summary_record_name = summary_record_name
+        self.initial_step = initial_step
+
+        self.evaluateSelf = evaluateSelf
+        self.evaluate = evaluate
 
         # accelerator
 
@@ -846,7 +874,7 @@ class Trainer1D(object):
                     data = next(self.dl).to(device)
 
                     with self.accelerator.autocast():
-                        loss = self.model(data)
+                        _, loss = self.model(data)
                         loss = loss / self.gradient_accumulate_every
                         total_loss += loss.item()
 
@@ -855,6 +883,51 @@ class Trainer1D(object):
                 pbar.set_description(f'loss: {total_loss:.4f}')
 
                 accelerator.wait_for_everyone()
+
+                if self.swriter and self.summary_folder_name and self.summary_record_name:
+                    self.swriter.add_scalars(self.summary_folder_name,
+                                             {
+                                                 self.summary_record_name: total_loss,
+                                             },
+                                             self.step)
+                    
+                if self.step % 100 == 0 and self.evaluateSelf and self.evaluate:
+                    eval_loss_dict_net = self.evaluateSelf.evaluate(latent_diffusion=True)
+                    self.swriter.add_scalars('loss_net/kl_loss',
+                                             {
+                                                 'evald_loss_kl_contact': eval_loss_dict_net['loss_kl_contact'],
+                                                 'evald_loss_kl_part': eval_loss_dict_net['loss_kl_part'],
+                                                 'evald_loss_kl_uv': eval_loss_dict_net['loss_kl_uv'],
+                                             },
+                                             self.step + self.initial_step)
+
+                    self.swriter.add_scalars('loss_net/total_rec_loss',
+                                             {
+                                                 'evald_loss_total': eval_loss_dict_net['loss_total'],
+                                             },
+                                             self.step + self.initial_step)
+
+                    self.swriter.add_scalars('loss_net/contact_rec_loss',
+                                             {
+                                                 'evald_loss_contact_rec': eval_loss_dict_net[
+                                                     'loss_contact_rec'],
+                                             },
+                                             self.step + self.initial_step)
+
+                    self.swriter.add_scalars('loss_net/part_rec_loss',
+                                             {
+                                                 'evald_loss_part_rec': eval_loss_dict_net[
+                                                     'loss_part_rec'],
+                                             },
+                                             self.step + self.initial_step)
+
+                    self.swriter.add_scalars('loss_net/uv_rec_loss',
+                                             {
+                                                 'evald_loss_uv_rec': eval_loss_dict_net[
+                                                     'loss_uv_rec'],
+                                             },
+                                             self.step + self.initial_step)
+
                 accelerator.clip_grad_norm_(self.model.parameters(), self.max_grad_norm)
 
                 self.opt.step()
