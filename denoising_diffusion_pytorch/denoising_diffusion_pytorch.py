@@ -830,7 +830,7 @@ class GaussianDiffusion(Module):
         loss = reduce(loss, 'b ... -> b', 'mean')
 
         loss = loss * extract(self.loss_weight, t, loss.shape)
-        return loss.mean()
+        return model_out, loss.mean()
 
     def forward(self, img, *args, **kwargs):
         b, c, h, w, device, img_size, = *img.shape, img.device, self.image_size
@@ -876,11 +876,11 @@ class Dataset(Dataset):
 
 # trainer class
 
-class Trainer:
+class GaussianDiffusionTrainer:
     def __init__(
         self,
         diffusion_model,
-        folder,
+        dataset,
         *,
         train_batch_size = 16,
         gradient_accumulate_every = 1,
@@ -901,9 +901,22 @@ class Trainer:
         inception_block_idx = 2048,
         max_grad_norm = 1.,
         num_fid_samples = 50000,
-        save_best_and_latest_only = False
+        save_best_and_latest_only = False,
+        swriter=None,
+        summary_folder_name=None,
+        summary_record_name=None,
+        evaluateSelf=None,
+        evaluate=None,
+        initial_step=1000,
     ):
         super().__init__()
+
+        self.swriter = swriter
+        self.summary_folder_name = summary_folder_name
+        self.summary_record_name = summary_record_name
+        self.initial_step = initial_step
+        self.evaluateSelf = evaluateSelf
+        self.evaluate = evaluate
 
         # accelerator
 
@@ -940,7 +953,7 @@ class Trainer:
 
         # dataset and dataloader
 
-        self.ds = Dataset(folder, self.image_size, augment_horizontal_flip = augment_horizontal_flip, convert_image_to = convert_image_to)
+        self.ds = dataset
 
         assert len(self.ds) >= 100, 'you should have at least 100 images in your folder. at least 10k images recommended'
 
@@ -1055,7 +1068,7 @@ class Trainer:
                     data = next(self.dl).to(device)
 
                     with self.accelerator.autocast():
-                        loss = self.model(data)
+                        _, loss = self.model(data)
                         loss = loss / self.gradient_accumulate_every
                         total_loss += loss.item()
 
@@ -1064,6 +1077,51 @@ class Trainer:
                 pbar.set_description(f'loss: {total_loss:.4f}')
 
                 accelerator.wait_for_everyone()
+
+                if self.swriter and self.summary_folder_name and self.summary_record_name:
+                    self.swriter.add_scalars(self.summary_folder_name,
+                                             {
+                                                 self.summary_record_name: total_loss,
+                                             },
+                                             self.step)
+                    
+                if self.step % 500 == 0 and self.evaluateSelf and self.evaluate:
+                    eval_loss_dict_net = self.evaluateSelf.evaluate(latent_diffusion=True)
+                    self.swriter.add_scalars('loss_net/kl_loss',
+                                             {
+                                                 'evald_loss_kl_contact': eval_loss_dict_net['loss_kl_contact'],
+                                                 'evald_loss_kl_part': eval_loss_dict_net['loss_kl_part'],
+                                                 'evald_loss_kl_uv': eval_loss_dict_net['loss_kl_uv'],
+                                             },
+                                             self.step + self.initial_step)
+
+                    self.swriter.add_scalars('loss_net/total_rec_loss',
+                                             {
+                                                 'evald_loss_total': eval_loss_dict_net['loss_total'],
+                                             },
+                                             self.step + self.initial_step)
+
+                    self.swriter.add_scalars('loss_net/contact_rec_loss',
+                                             {
+                                                 'evald_loss_contact_rec': eval_loss_dict_net[
+                                                     'loss_contact_rec'],
+                                             },
+                                             self.step + self.initial_step)
+
+                    self.swriter.add_scalars('loss_net/part_rec_loss',
+                                             {
+                                                 'evald_loss_part_rec': eval_loss_dict_net[
+                                                     'loss_part_rec'],
+                                             },
+                                             self.step + self.initial_step)
+
+                    self.swriter.add_scalars('loss_net/uv_rec_loss',
+                                             {
+                                                 'evald_loss_uv_rec': eval_loss_dict_net[
+                                                     'loss_uv_rec'],
+                                             },
+                                             self.step + self.initial_step)
+                    
                 accelerator.clip_grad_norm_(self.model.parameters(), self.max_grad_norm)
 
                 self.opt.step()
