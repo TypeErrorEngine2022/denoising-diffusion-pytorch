@@ -6,7 +6,7 @@ from .weighted_objective_gaussian_diffusion import WeightedObjectiveGaussianDiff
 from .elucidated_diffusion import ElucidatedDiffusion
 from .v_param_continuous_time_gaussian_diffusion import VParamContinuousTimeGaussianDiffusion
 
-from .denoising_diffusion_pytorch_1d import GaussianDiffusion1D, Unet1D, Trainer1D, Dataset1D
+from .denoising_diffusion_pytorch_1d import GaussianDiffusion1D, Unet1D, GaussianDiffusion1DTrainer, Dataset1D
 
 from .karras_unet import (
     KarrasUnet,

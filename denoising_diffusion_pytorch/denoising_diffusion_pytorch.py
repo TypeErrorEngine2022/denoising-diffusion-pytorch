@@ -1077,50 +1077,6 @@ class GaussianDiffusionTrainer:
                 pbar.set_description(f'loss: {total_loss:.4f}')
 
                 accelerator.wait_for_everyone()
-
-                if self.swriter and self.summary_folder_name and self.summary_record_name:
-                    self.swriter.add_scalars(self.summary_folder_name,
-                                             {
-                                                 self.summary_record_name: total_loss,
-                                             },
-                                             self.step)
-                    
-                if self.step % 500 == 0 and self.evaluateSelf and self.evaluate:
-                    eval_loss_dict_net = self.evaluateSelf.evaluate(latent_diffusion=True)
-                    self.swriter.add_scalars('loss_net/kl_loss',
-                                             {
-                                                 'evald_loss_kl_contact': eval_loss_dict_net['loss_kl_contact'],
-                                                 'evald_loss_kl_part': eval_loss_dict_net['loss_kl_part'],
-                                                 'evald_loss_kl_uv': eval_loss_dict_net['loss_kl_uv'],
-                                             },
-                                             self.step + self.initial_step)
-
-                    self.swriter.add_scalars('loss_net/total_rec_loss',
-                                             {
-                                                 'evald_loss_total': eval_loss_dict_net['loss_total'],
-                                             },
-                                             self.step + self.initial_step)
-
-                    self.swriter.add_scalars('loss_net/contact_rec_loss',
-                                             {
-                                                 'evald_loss_contact_rec': eval_loss_dict_net[
-                                                     'loss_contact_rec'],
-                                             },
-                                             self.step + self.initial_step)
-
-                    self.swriter.add_scalars('loss_net/part_rec_loss',
-                                             {
-                                                 'evald_loss_part_rec': eval_loss_dict_net[
-                                                     'loss_part_rec'],
-                                             },
-                                             self.step + self.initial_step)
-
-                    self.swriter.add_scalars('loss_net/uv_rec_loss',
-                                             {
-                                                 'evald_loss_uv_rec': eval_loss_dict_net[
-                                                     'loss_uv_rec'],
-                                             },
-                                             self.step + self.initial_step)
                     
                 accelerator.clip_grad_norm_(self.model.parameters(), self.max_grad_norm)
 
@@ -1131,6 +1087,49 @@ class GaussianDiffusionTrainer:
 
                 self.step += 1
                 if accelerator.is_main_process:
+                    if self.swriter and self.summary_folder_name and self.summary_record_name:
+                        self.swriter.add_scalars(self.summary_folder_name,
+                                             {
+                                                 self.summary_record_name: total_loss,
+                                             },
+                                             self.step)
+                    
+                    if self.step % 500 == 0 and self.evaluateSelf and self.evaluate:
+                        eval_loss_dict_net = self.evaluateSelf.evaluate(latent_diffusion=True)
+                        self.swriter.add_scalars('loss_net/kl_loss',
+                                                {
+                                                    'evald_loss_kl_contact': eval_loss_dict_net['loss_kl_contact'],
+                                                    'evald_loss_kl_part': eval_loss_dict_net['loss_kl_part'],
+                                                    'evald_loss_kl_uv': eval_loss_dict_net['loss_kl_uv'],
+                                                },
+                                                self.step + self.initial_step)
+
+                        self.swriter.add_scalars('loss_net/total_rec_loss',
+                                                {
+                                                    'evald_loss_total': eval_loss_dict_net['loss_total'],
+                                                },
+                                                self.step + self.initial_step)
+
+                        self.swriter.add_scalars('loss_net/contact_rec_loss',
+                                                {
+                                                    'evald_loss_contact_rec': eval_loss_dict_net[
+                                                        'loss_contact_rec'],
+                                                },
+                                                self.step + self.initial_step)
+
+                        self.swriter.add_scalars('loss_net/part_rec_loss',
+                                                {
+                                                    'evald_loss_part_rec': eval_loss_dict_net[
+                                                        'loss_part_rec'],
+                                                },
+                                                self.step + self.initial_step)
+
+                        self.swriter.add_scalars('loss_net/uv_rec_loss',
+                                                {
+                                                    'evald_loss_uv_rec': eval_loss_dict_net[
+                                                        'loss_uv_rec'],
+                                                },
+                                                self.step + self.initial_step)
                     self.ema.update()
 
                     if self.step != 0 and divisible_by(self.step, self.save_and_sample_every):
